@@ -1,0 +1,33 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "pc",
+      "displayName": "PC: Windows .exe (MinGW-w64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-pc",
+      "toolchainFile": "$env{HOME}/VectorPie/dist/pc/lib/cmake/VectorPie/toolchain-mingw-w64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SDL2_DIR": "/opt/sdl2-mingw/cmake",
+        "CMAKE_PREFIX_PATH": "$env{HOME}/VectorPie/dist/pc"
+      }
+    },
+    {
+      "name": "pi",
+      "displayName": "Pi: Linux arm64 (Debian trixie)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-pi",
+      "toolchainFile": "$env{HOME}/VectorPie/dist/pi/lib/cmake/VectorPie/toolchain-pi-arm64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$env{HOME}/VectorPie/dist/pi"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "pc", "configurePreset": "pc" },
+    { "name": "pi", "configurePreset": "pi" }
+  ]
+}
