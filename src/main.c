@@ -7,7 +7,9 @@
  *
  * Controls (the cabinet's own, from advmame.rc, until changed on the
  * CONTROLS page: TAB, or START 1 and START 2 together, on the title):
- *   the stick (analog or digital) runs, button 1 jumps, button 2 dives.
+ *   the stick (analog or digital) runs, button 1 jumps, button 2 dives,
+ *   button 3 punches the nearest bean (a shove instead, if it is at an
+ *   edge). Beans bumped too often get furious and get even.
  *   START 1 plays (a credit), the exit button goes back to the menu.
  *
  * Scoring: in each round you go through, points for your place and for
@@ -48,11 +50,11 @@ static const uint8_t COLORS[][3] = {
 
 /* ---- the game's functions (its CONTROLS page) ------------------------------------ */
 
-enum { FUNCTIONS = 6 };
-static const char *const FUNCTION_NAME[FUNCTIONS] = { "up", "down", "left", "right", "jump", "dive" };
-static const char *const FUNCTION_LABEL[FUNCTIONS] = { "RUN AHEAD", "RUN BACK", "LEFT", "RIGHT", "JUMP", "DIVE" };
+enum { FUNCTIONS = 7 };
+static const char *const FUNCTION_NAME[FUNCTIONS] = { "up", "down", "left", "right", "jump", "dive", "punch" };
+static const char *const FUNCTION_LABEL[FUNCTIONS] = { "RUN AHEAD", "RUN BACK", "LEFT", "RIGHT", "JUMP", "DIVE", "PUNCH" };
 static const char *const FUNCTION_STANDARD[FUNCTIONS] = { "p1_up", "p1_down", "p1_left", "p1_right",
-                                                          "p1_button1", "p1_button2" };
+                                                          "p1_button1", "p1_button2", "p1_button3" };
 
 static struct {
     int        state;
@@ -64,7 +66,9 @@ static struct {
      * BEANRUSH_SHOTS=<folder> saves a picture every half second (or every
      * BEANRUSH_SHOT_EVERY seconds, from BEANRUSH_SHOT_FROM on: a clip),
      * BEANRUSH_ROUND=2 or 3 starts the show at that round,
-     * BEANRUSH_COURSE=1..7 makes that course the first round's */
+     * BEANRUSH_COURSE=1..7 makes that course the first round's,
+     * BEANRUSH_FACECAM=1 films the player from in front */
+    int        facecam;
     int        autoplay;
     const char *shots;
     double     next_shot, shot_every;
@@ -106,7 +110,7 @@ static struct {
 
     /* sounds */
     vp_sound  *snd_jump, *snd_dive, *snd_hit, *snd_fall, *snd_beep, *snd_go;
-    vp_sound  *snd_through, *snd_out, *snd_crown, *snd_coin, *snd_menu, *snd_boing;
+    vp_sound  *snd_through, *snd_out, *snd_crown, *snd_coin, *snd_menu, *snd_boing, *snd_punch;
     vp_voice   music;
     int        track;           /* the one playing */
 } G;
@@ -158,6 +162,17 @@ static float g_beep(float t, int i) { (void)i; return 0.35f * sq(TAU * 660 * t) 
 static float g_go(float t, int i)   { (void)i; return 0.3f * (sq(TAU * 990 * t) + 0.5f * sinf(TAU * 1980 * t)) * env(t, 0.5f); }
 /* a spring: a rising wobble */
 static float g_boing(float t, int i) { (void)i; return 0.35f * sinf(TAU * (180 + 500 * t + 60 * sinf(TAU * 18 * t)) * t) * env(t, 0.3f); }
+/* a big cartoon punch: a sharp slap, a heavy thump dropping low, a burst of
+ * noise, a short tail */
+static float g_punch(float t, int i)
+{
+    float slap = noise(i) * env(t, 0.025f) * 0.9f;
+    float f = 45 + 135 * expf(-t * 18);                      /* 180 Hz falling to 45 */
+    float thump = sinf(TAU * f * t) * env(t, 0.32f) * 1.1f;
+    float crunch = noise(i / 3) * env(t, 0.12f) * 0.5f;
+    float v = slap + thump + crunch;
+    return v > 1 ? 1 : v < -1 ? -1 : v;
+}
 static float g_coin(float t, int i) { (void)i; return 0.3f * sq(TAU * (t < 0.06f ? 990 : 1320) * t) * env(t, 0.2f); }
 static float g_menu(float t, int i) { (void)i; return 0.25f * sinf(TAU * 1200 * t) * env(t, 0.05f); }
 
@@ -197,6 +212,7 @@ static void load_sounds(void)
     G.snd_crown = synth(1.3f, g_crown);
     G.snd_coin = synth(0.2f, g_coin);
     G.snd_boing = synth(0.3f, g_boing);
+    G.snd_punch = synth(0.45f, g_punch);
     G.snd_menu = synth(0.05f, g_menu);
 }
 
@@ -359,6 +375,11 @@ static void bean_sounds(int i, int ev)
         if (ev & EV_DIVE) play(G.snd_dive, 0.6f, 1.0f);
         if (ev & EV_HIT)  play(G.snd_hit, 0.9f, 1.0f);
         if (ev & EV_FALL) play(G.snd_fall, 0.7f, 1.0f);
+        if (ev & EV_PUNCH) play(G.snd_punch, 1.0f, 1.0f);
+        if (ev & EV_SHOVE) play(G.snd_boing, 0.9f, 0.7f);
+        if (ev & EV_WHIFF) play(G.snd_dive, 0.4f, 1.6f);
+    } else if ((ev & (EV_PUNCH | EV_SHOVE)) && G.player >= 0 && fabsf(b->pos.z - G.beans[G.player].pos.z) < 14) {
+        play((ev & EV_PUNCH) ? G.snd_punch : G.snd_boing, 0.55f, 1.0f);   /* a fight nearby */
     } else if ((ev & EV_HIT) && G.player >= 0 && fabsf(b->pos.z - G.beans[G.player].pos.z) < 12) {
         play(G.snd_hit, 0.3f, 1.3f);                /* someone near you got bonked */
     }
@@ -388,10 +409,15 @@ static void race_step(float dt, int live)
             if (vp_input_held(G.in, "down"))  in.z = -1;
             in.jump = vp_input_pressed(G.in, "jump");
             in.dive = vp_input_pressed(G.in, "dive");
+            in.punch = vp_input_pressed(G.in, "punch");
+        } else if (b->revenge > 0) {
+            bean_revenge(b, G.beans, &in);           /* furious: getting even */
         } else {
             bean_ai(b, &G.course, G.clock, &in, &G.rng);
         }
+        bean_mood(b, G.beans, G.nbeans, dt);
         bean_control(b, &in, &G.course, G.clock, dt, &ev[i]);
+        if (in.punch && live) ev[i] |= bean_strike(b, G.beans, G.nbeans, &G.course, G.clock);
     }
 
     unsigned bounced;
@@ -437,6 +463,10 @@ static void camera_follow(int who, float dt)
     if (b->fallen > 0 || p.y < 0) p.y = 0;          /* falling: stay up, watch it go */
     vp_vec3 eye = vp_v3(p.x * 0.6f, p.y + 4.6f, p.z - 8.5f);
     vp_vec3 at = vp_v3(p.x * 0.8f, p.y + 1.0f, p.z + 6.0f);
+    if (G.facecam) {                                /* development: in front, looking at it */
+        eye = vp_v3(p.x, p.y + 1.6f, p.z + 3.2f);
+        at = vp_v3(p.x, p.y + 1.0f, p.z);
+    }
     if (!G.cam_set) { G.cam_eye = eye; G.cam_at = at; G.cam_set = 1; }
     float k = 1.0f - expf(-dt * 5.0f);
     G.cam_eye = vp_v3_add(G.cam_eye, vp_v3_scale(vp_v3_sub(eye, G.cam_eye), k));
@@ -988,6 +1018,7 @@ static int init(vp_game *g)
     G.last_rank = -1;
     G.rng = 0xbea05u;
     G.autoplay = getenv("BEANRUSH_AUTOPLAY") && atoi(getenv("BEANRUSH_AUTOPLAY"));
+    G.facecam = getenv("BEANRUSH_FACECAM") && atoi(getenv("BEANRUSH_FACECAM"));
     G.shots = getenv("BEANRUSH_SHOTS");
     G.shot_every = getenv("BEANRUSH_SHOT_EVERY") ? atof(getenv("BEANRUSH_SHOT_EVERY")) : 0.5;
     if (G.shot_every <= 0) G.shot_every = 0.5;

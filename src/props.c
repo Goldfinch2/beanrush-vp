@@ -511,10 +511,16 @@ static void bounce(Bean *a, Bean *b, float speed)
     if (l < 1e-3f) { dx = 1; dz = 0; l = 1; }
     dx /= l; dz /= l;
     float k = fminf(3.5f + speed * 0.9f, 9.0f);
+    /* who pushed whom: the one moving into the other more */
+    float ia = a->vel.x * dx + a->vel.z * dz, ib = -(b->vel.x * dx + b->vel.z * dz);
+    float hurt = 0.10f + speed * 0.025f;
+    if (ia >= ib) { bean_annoy(b, a->id, hurt); bean_annoy(a, b->id, hurt * 0.2f); }
+    else          { bean_annoy(a, b->id, hurt); bean_annoy(b, a->id, hurt * 0.2f); }
     Bean *both[2] = { a, b };
     for (int i = 0; i < 2; i++) {
         Bean *x = both[i];
         if (x->state == BEAN_OUT || x->fallen > 0 || x->tumbling) continue;
+        if (x->punch > 0) continue;                 /* its fist met it: the punch did the pushing */
         float sgn = i ? 1.0f : -1.0f;
         vp_vec3 v = vp_body_vel(x->body);
         v.x += sgn * dx * k;
@@ -523,6 +529,19 @@ static void bounce(Bean *a, Bean *b, float speed)
         vp_body_set_vel(x->body, v);
         x->squash = -0.7f;
         x->grounded = 0;
+    }
+}
+
+void props_bean_push(Bean *b, vp_vec3 v, int knock_over)
+{
+    if (!b->body || b->state == BEAN_OUT || b->fallen > 0) return;
+    vp_body_set_vel(b->body, v);
+    b->vel = v;
+    b->grounded = 0;
+    b->squash = -0.8f;
+    if (knock_over) {
+        float l = sqrtf(v.x * v.x + v.z * v.z) + 1e-4f;
+        knock(b, v.x / l, v.z / l);
     }
 }
 
@@ -550,7 +569,9 @@ static void drive_limbs(const Bean *b, float dt)
         float target;
         if (k < 2) target = b->grounded ? sinf(S.stride[i] + phase) * amp * 1.15f : -0.7f;
         else       target = sinf(S.stride[i] + phase) * (b->grounded ? amp * 1.8f : 2.0f);
-        vp_joint_motor(l->hinge, (target - vp_joint_position(l->hinge)) * 30.0f, k < 2 ? 160.0f : 70.0f);
+        float strength = k < 2 ? 160.0f : 70.0f;
+        if (k == 3 && b->punch > 0) { target = -1.9f; strength = 160.0f; }     /* the punch: straight out ahead */
+        vp_joint_motor(l->hinge, (target - vp_joint_position(l->hinge)) * 30.0f, strength);
     }
 }
 

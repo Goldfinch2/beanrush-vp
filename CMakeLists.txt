@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(beanrush VERSION 0.1.0 LANGUAGES C CXX)
+project(beanrush VERSION 0.2.0 LANGUAGES C CXX)
 
 # Bean Rush on the VectorPie SDK. Builds, from WSL2 Debian:
 #   cmake --preset pc && cmake --build --preset pc     # build-pc/beanrush.exe

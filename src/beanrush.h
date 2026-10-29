@@ -158,6 +158,12 @@ typedef struct {
     int      sloppy;        /* this time round, it misjudges */
     float    stuck;         /* s without progress */
     float    best_z;
+    /* its mood: bumped by others it gets annoyed, then furious */
+    float    temper;        /* 0 calm .. 1 furious */
+    int      grudge;        /* the bean that pushed it most (-1: none) */
+    float    revenge;       /* s left going after its grudge (computer's beans) */
+    float    punch;         /* s left of a punch's swing (drawn, its arm) */
+    float    cool;          /* s before it can punch again */
 } Bean;
 
 /* The controls a bean is given for one step: a direction on the ground
@@ -165,6 +171,7 @@ typedef struct {
 typedef struct {
     float x, z;
     int   jump, dive;
+    int   punch;            /* punch the nearest bean, or shove it over an edge */
 } BeanInput;
 
 void bean_place(Bean *b, const Course *c, int slot, int count);
@@ -181,6 +188,18 @@ float bean_progress(const Bean *b);
 #define EV_HIT     4
 #define EV_FALL    8
 #define EV_LAND    16
+#define EV_PUNCH   32
+#define EV_SHOVE   64
+#define EV_WHIFF   128
+
+/* Moods (beans.c): another bean bumped `victim` (`by` its index), this
+ * hard. Each step: tempers cool; a furious computer bean sets off after its
+ * grudge. A punch (or a shove, at an edge) at the nearest bean in
+ * front; returns its events. The computer's revenge: chase and punch. */
+void bean_annoy(Bean *victim, int by, float amount);
+void bean_mood(Bean *b, Bean *beans, int n, float dt);
+int  bean_strike(Bean *b, Bean *beans, int n, const Course *c, float t);
+void bean_revenge(Bean *b, const Bean *beans, BeanInput *out);
 
 /* ---- drawing ------------------------------------------------------------------- */
 
@@ -210,6 +229,9 @@ void props_bean_drive(Bean *b, float dt);
 void props_bean_read(Bean *b);
 void props_bean_put(Bean *b);
 int  props_bean_ground(const Bean *b, Support *s);
+/* Thrown: its body given velocity v; knocked over too (a punch), or only
+ * sent flying (a shove). */
+void props_bean_push(Bean *b, vp_vec3 v, int knock_over);
 /* A dive: it pitches forward onto its belly, limp, until it gets up. */
 void props_bean_dive(Bean *b);
 /* What is straight below the bean, for its shadow: 1 and its height. */

@@ -38,6 +38,9 @@ void bean_place(Bean *b, const Course *c, int slot, int count)
     b->think = 0;
     b->stuck = 0;
     b->best_z = b->pos.z;
+    b->temper = 0;
+    b->grudge = -1;
+    b->revenge = b->punch = b->cool = 0;
 }
 
 static void respawn(Bean *b, const Course *c, float t)
@@ -422,4 +425,83 @@ void bean_ai(Bean *b, const Course *c, float t, BeanInput *out, unsigned *rng)
         b->lane = -b->lane + (rnd(rng) - 0.5f) * 0.5f;
         b->stuck = 0;
     }
+}
+
+/* ---- moods ------------------------------------------------------------------------------ */
+
+void bean_annoy(Bean *victim, int by, float amount)
+{
+    if (victim->state != BEAN_RACING) return;
+    victim->temper += amount;
+    if (victim->temper > 1.2f) victim->temper = 1.2f;
+    if (amount > 0.05f) victim->grudge = by;
+}
+
+void bean_mood(Bean *b, Bean *beans, int n, float dt)
+{
+    if (b->punch > 0) b->punch -= dt;
+    if (b->cool > 0) b->cool -= dt;
+    if (b->revenge > 0) {
+        b->revenge -= dt;
+        const Bean *t = b->grudge >= 0 && b->grudge < n ? &beans[b->grudge] : NULL;
+        if (!t || t->state != BEAN_RACING || t->fallen > 0 || b->fallen > 0) b->revenge = 0;
+        return;
+    }
+    b->temper -= 0.07f * dt;                         /* cooling down */
+    if (b->temper < 0) b->temper = 0;
+    /* the computer's beans, furious: after whoever pushed them most */
+    if (!b->human && b->temper >= 1.0f && b->grudge >= 0 && b->grudge < n &&
+        beans[b->grudge].state == BEAN_RACING && b->state == BEAN_RACING) {
+        b->revenge = 4.0f;
+    }
+}
+
+int bean_strike(Bean *b, Bean *beans, int n, const Course *c, float t)
+{
+    if (b->cool > 0 || b->state != BEAN_RACING || b->fallen > 0 || b->stun > 0 || b->tumbling) return 0;
+    float fx = sinf(b->heading), fz = cosf(b->heading);
+    Bean *best = NULL;
+    float bd = 1.9f;
+    for (int i = 0; i < n; i++) {
+        Bean *o = &beans[i];
+        if (o == b || o->state != BEAN_RACING || o->fallen > 0) continue;
+        float dx = o->pos.x - b->pos.x, dz = o->pos.z - b->pos.z, d = sqrtf(dx * dx + dz * dz);
+        if (d > bd || fabsf(o->pos.y - b->pos.y) > 1.2f) continue;
+        int grudge = b->revenge > 0 && i == b->grudge;
+        if (!grudge && (dx * fx + dz * fz) < 0.3f * d) continue;       /* not in front */
+        bd = d; best = o;
+    }
+    b->punch = 0.35f;
+    b->cool = 1.2f;
+    if (!best) return EV_WHIFF;
+    float dx = best->pos.x - b->pos.x, dz = best->pos.z - b->pos.z, d = sqrtf(dx * dx + dz * dz) + 1e-4f;
+    dx /= d; dz /= d;
+    float fury = b->temper >= 1.0f || b->revenge > 0 ? 1.25f : 1.0f;
+    /* at an edge: no floor a little past it, that way. A shove, over. */
+    Support s;
+    int edge = !course_floor(c, best->pos.x + dx * 1.8f, best->pos.z + dz * 1.8f, best->pos.y + 0.5f, t, &s) ||
+               s.top < best->pos.y - 1.0f;
+    best->temper += 0.3f;                            /* and now it holds a grudge */
+    if (best->temper > 1.2f) best->temper = 1.2f;
+    best->grudge = b->id;
+    b->temper = 0;
+    b->revenge = 0;
+    if (edge) {
+        props_bean_push(best, vp_v3(dx * 13.0f * fury, 4.5f, dz * 13.0f * fury), 0);
+        return EV_SHOVE;
+    }
+    props_bean_push(best, vp_v3(dx * 6.5f * fury, 4.5f, dz * 6.5f * fury), 1);
+    return EV_PUNCH;
+}
+
+/* Going after its grudge: straight at it, punching when in reach. */
+void bean_revenge(Bean *b, const Bean *beans, BeanInput *out)
+{
+    memset(out, 0, sizeof *out);
+    const Bean *t = &beans[b->grudge];
+    float dx = t->pos.x - b->pos.x, dz = t->pos.z - b->pos.z, d = sqrtf(dx * dx + dz * dz) + 1e-4f;
+    out->x = dx / d;
+    out->z = dz / d;
+    if (d < 1.6f) out->punch = 1;
+    if (t->pos.y > b->pos.y + 0.8f && b->grounded) out->jump = 1;
 }

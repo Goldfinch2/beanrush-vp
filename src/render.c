@@ -7,7 +7,8 @@
 #include <stdio.h>
 
 static vp3d_mesh  *g_box;       /* a cube, corners at +-1 */
-static vp3d_mesh  *g_bean;      /* feet at 0, BEAN_H tall, a visor in front (+z) */
+static vp3d_mesh  *g_bean;      /* feet at 0, BEAN_H tall, its front +z */
+static vp3d_mesh  *g_eyes;      /* on its front: drawn with it, in white */
 static vp3d_mesh  *g_ball;      /* radius 1, a band round it to see it roll */
 static vp3d_mesh  *g_leg, *g_arm;   /* a limb and its round end, one shape: from the joint (0) down y */
 /* Textures (vp3d textures: line drawings on faces) */
@@ -56,9 +57,9 @@ static vp3d_mesh *new_box(const vp3d_texture *top, float tile)
 }
 
 /* A bean's body: rings of 10 round a vertical axis, round at the bottom and
- * top, on short legs (drawn apart: draw_limbs). A ring round its waist and
- * its visor are lone lines just outside it: the scene hides their far side,
- * so the body reads as round. */
+ * top, on short legs (drawn apart: draw_limbs). A ring round its waist is a
+ * lone line just outside it: the scene hides its far side, so the body reads
+ * as round. Its eyes are a mesh of their own (new_eyes), drawn white. */
 #define BODY_Y 0.36f                /* the body's bottom: the legs below */
 static vp3d_mesh *new_bean(void)
 {
@@ -88,13 +89,6 @@ static vp3d_mesh *new_bean(void)
         int t[3] = { top, first + (RINGS - 1) * SIDES + s, first + (RINGS - 1) * SIDES + s1 };
         vp3d_mesh_face(m, t, 3);
     }
-    /* the visor: a rounded slot on its face */
-    int v[6];
-    static const float vx[6] = { -0.24f, -0.10f, 0.10f, 0.24f, 0.10f, -0.10f };
-    static const float vy[6] = { 1.08f, 1.16f, 1.16f, 1.08f, 0.99f, 0.99f };
-    for (int i = 0; i < 6; i++)
-        v[i] = vp3d_mesh_vertex(m, vx[i], vy[i], sqrtf(0.47f * 0.47f - vx[i] * vx[i]) + 0.01f);
-    for (int i = 0; i < 6; i++) vp3d_mesh_line(m, v[i], v[(i + 1) % 6]);
     /* a ring round its waist: its far side hidden, it shows the body round */
     int w[16];
     for (int i = 0; i < 16; i++) {
@@ -103,6 +97,31 @@ static vp3d_mesh *new_bean(void)
     }
     for (int i = 0; i < 16; i++) vp3d_mesh_line(m, w[i], w[(i + 1) % 16]);
     vp3d_mesh_set_crease(m, 60);
+    vp3d_mesh_finish(m);
+    return m;
+}
+
+/* Its eyes: two tall ovals side by side on the front of the body, a big one
+ * and a small one (lines just outside the surface, hidden when it turns
+ * away). */
+static vp3d_mesh *new_eyes(void)
+{
+    static const float eye[2][4] = { { -0.075f, 1.12f, 0.095f, 0.14f },     /* x, y, half width, half height */
+                                     { 0.085f, 1.12f, 0.045f, 0.068f } };
+    enum { N = 12 };
+    vp3d_mesh *m;
+    if (vp3d_mesh_create(&m) != VP_OK) return NULL;
+    for (int e = 0; e < 2; e++) {
+        int v[N];
+        for (int i = 0; i < N; i++) {
+            float a = 6.28318f * i / N;
+            float x = eye[e][0] + eye[e][2] * cosf(a), y = eye[e][1] + eye[e][3] * sinf(a);
+            /* the body's radius at that height (between its rings at 1.07 and 1.30 m) */
+            float r = 0.44f + (y - 1.07f) / 0.23f * (0.35f - 0.44f);
+            v[i] = vp3d_mesh_vertex(m, x, y, sqrtf(fmaxf(r * r - x * x, 0.0f)) + 0.012f);
+        }
+        for (int i = 0; i < N; i++) vp3d_mesh_line(m, v[i], v[(i + 1) % N]);
+    }
     vp3d_mesh_finish(m);
     return m;
 }
@@ -318,6 +337,7 @@ int render_init(void)
     g_floor = new_box(g_floor_tex, 8.0f);
     g_plank = new_box(g_plank_tex, 1.5f);
     g_bean = new_bean();
+    g_eyes = new_eyes();
     g_ball = new_ball(1);
     g_leg = new_limb(0.38f, 0.13f);
     g_arm = new_limb(0.38f, 0.115f);
@@ -335,6 +355,7 @@ void render_free(void)
     vp3d_texture_free(g_floor_tex);
     vp3d_texture_free(g_plank_tex);
     vp3d_mesh_free(g_bean);
+    vp3d_mesh_free(g_eyes);
     vp3d_mesh_free(g_ball);
     vp3d_mesh_free(g_leg);
     vp3d_mesh_free(g_arm);
@@ -427,17 +448,6 @@ static void draw_part(vp_dvg *d, const Part *p, const Part *c0, float t)
         vp_xf x = xf_basis(ball, vp_v3(r, 0, 0), vp_v3(0, r * cosf(spin), -r * sinf(spin)),
                            vp_v3(0, r * sinf(spin), r * cosf(spin)));     /* its top going toward -z */
         vp3d_scene_mesh(s, g_ball, &x, VP3D_SOLID);
-        if (p->variant) {                           /* fruit: a stalk and a leaf, turning with it */
-            vp_vec3 up = vp_v3(0, cosf(spin), -sinf(spin));
-            vp_vec3 top = vp_v3_add(ball, vp_v3_scale(up, r));
-            vp_vec3 end = vp_v3_add(ball, vp_v3_scale(up, r * 1.35f));
-            vp_vec3 leaf = vp_v3_add(vp_v3_add(ball, vp_v3_scale(up, r * 1.2f)), vp_v3(r * 0.4f, 0, 0));
-            vp_color(d, 120, 80, 30);
-            vp3d_scene_line(s, top, end);
-            vp_color(d, 60, 220, 60);
-            vp3d_scene_line(s, end, leaf);
-            vp3d_scene_line(s, leaf, vp_v3_add(top, vp_v3(r * 0.15f, 0, 0)));
-        }
         break;
     }
     case P_DOOR: {
@@ -576,6 +586,41 @@ static void draw_shadow(vp_dvg *d, const Bean *b)
     }
 }
 
+/* Its mood on its face: brows over the eyes, their inner ends coming down
+ * as it gets angrier; furious, steam puffing up off its head. In its own
+ * frame (x), on the curve of its body. */
+static void draw_mood(vp_dvg *d, const Bean *b, const vp_xf *x, float anger, float t)
+{
+    (void)b;
+    static const float brow[2][4] = { { -0.19f, 1.30f, -0.02f, 1.31f },    /* the big eye's: outer x y, inner x y */
+                                      { 0.17f, 1.23f, 0.05f, 1.235f } };
+    vp_color(d, 255, 255, 255);
+    for (int e = 0; e < 2; e++) {
+        float ox = brow[e][0], oy = brow[e][1] + 0.02f * anger, ix = brow[e][2], iy = brow[e][3] - 0.08f * anger;
+        vp_vec3 p[2];
+        float px[2] = { ox, ix }, py[2] = { oy, iy };
+        for (int k = 0; k < 2; k++) {
+            float r = 0.44f + (py[k] - 1.07f) / 0.23f * (0.35f - 0.44f);
+            p[k] = vp_xf_point(x, vp_v3(px[k], py[k], sqrtf(fmaxf(r * r - px[k] * px[k], 0.0f)) + 0.015f));
+        }
+        vp3d_scene_line(g_scene, p[0], p[1]);
+    }
+    if (anger < 0.8f) return;
+    vp_color(d, 200, 200, 210);                     /* steam: puffs rising, growing, off the top */
+    for (int k = 0; k < 2; k++) {
+        float u = fmodf(t * 1.6f + k * 0.5f, 1.0f);
+        float side = k ? 0.16f : -0.16f, rad = 0.04f + 0.07f * u;
+        vp_vec3 c = vp_xf_point(x, vp_v3(side * (1 + u), BEAN_H - 0.05f + u * 0.4f, 0));
+        vp_vec3 prev = vp_v3(0, 0, 0);
+        for (int i = 0; i <= 6; i++) {
+            float a = 6.28318f * i / 6;
+            vp_vec3 q = vp_v3_add(c, vp_v3(cosf(a) * rad, sinf(a) * rad, 0));
+            if (i) vp3d_scene_line(g_scene, prev, q);
+            prev = q;
+        }
+    }
+}
+
 static void draw_bean(vp_dvg *d, const Bean *b, float t, float dist)
 {
     if (b->state == BEAN_OUT || b->fallen > 0) return;
@@ -590,6 +635,9 @@ static void draw_bean(vp_dvg *d, const Bean *b, float t, float dist)
         f = vp_v3(p.m[2], p.m[5], p.m[8]);
         feet = vp_v3_sub(vp_v3(p.t[0], p.t[1], p.t[2]), vp_v3_scale(up, BEAN_H / 2));
     }
+    /* its mood: 0 calm .. 1 furious (trembling) */
+    float anger = b->revenge > 0 ? 1.0f : fminf(1.0f, fmaxf(0.0f, (b->temper - 0.3f) / 0.7f));
+    if (anger > 0.8f && !b->tumbling) feet = vp_v3_add(feet, vp_v3_scale(r, 0.03f * sinf(t * 55.0f)));
     /* lying down after a dive; wobbling when knocked over */
     float tilt = 0, roll = 0;
     if (b->stun > 0 && !b->tumbling) { tilt = 0.6f * sinf(b->stun * 9.0f); roll = 0.5f * cosf(b->stun * 7.0f); }
@@ -619,6 +667,12 @@ static void draw_bean(vp_dvg *d, const Bean *b, float t, float dist)
     vp_xf x = xf_basis(feet, vp_v3_scale(r, sxz), vp_v3_scale(up, sy), vp_v3_scale(f, sxz));
     vp_color(d, b->r, b->g, b->b);
     vp3d_scene_mesh(g_scene, g_bean, &x, VP3D_SOLID);
+    if (g_eyes && dist < 40.0f) {
+        vp_color(d, 255, 255, 255);
+        vp3d_scene_mesh(g_scene, g_eyes, &x, VP3D_SOLID);
+        if (anger > 0.08f) draw_mood(d, b, &x, anger, t);
+        vp_color(d, b->r, b->g, b->b);              /* its arms and legs: its own color again */
+    }
     if (dist < 32.0f) draw_limbs(b, dist < 20.0f);
     if (dist < 25.0f) draw_shadow(d, b);
 }
